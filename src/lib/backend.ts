@@ -1,6 +1,6 @@
 // One API for the whole app: every call is a named Postgres function.
 // cloud → Supabase RPC; demo → the same SQL running in PGlite inside the browser.
-import { createClient, type SupabaseClient, type Session } from '@supabase/supabase-js';
+import type { SupabaseClient } from '@supabase/supabase-js';
 
 export class ApiError extends Error {
   code: string;
@@ -8,24 +8,31 @@ export class ApiError extends Error {
 }
 
 declare global {
-  interface Window { HISAB_CONFIG?: { supabaseUrl?: string; supabaseAnonKey?: string } }
+  interface Window { HISAB_CONFIG?: { neonUrl?: string; supabaseUrl?: string; supabaseAnonKey?: string } }
 }
 
 const cfg = window.HISAB_CONFIG || {};
 const SUPABASE_URL = cfg.supabaseUrl || import.meta.env.VITE_SUPABASE_URL || '';
 const SUPABASE_KEY = cfg.supabaseAnonKey || import.meta.env.VITE_SUPABASE_ANON_KEY || '';
-export const cloudConfigured = Boolean(SUPABASE_URL && SUPABASE_KEY);
+const NEON_URL = (cfg.neonUrl || import.meta.env.VITE_NEON_URL || '').trim().replace(/\/$/, '');
+export const cloudProvider: 'neon' | 'supabase' | null = NEON_URL ? 'neon' : SUPABASE_URL && SUPABASE_KEY ? 'supabase' : null;
+export const cloudConfigured = cloudProvider !== null;
 
 export type Mode = 'cloud' | 'demo';
 const MODE_KEY = 'hisab.mode';
 export function getMode(): Mode | null { return (localStorage.getItem(MODE_KEY) as Mode) || null; }
 export function setMode(m: Mode | null) { m ? localStorage.setItem(MODE_KEY, m) : localStorage.removeItem(MODE_KEY); }
 
-// ── cloud ──────────────────────────────────────────────────────────────────────
-let sb: SupabaseClient | null = null;
-export function supabase(): SupabaseClient {
-  if (!cloudConfigured) throw new ApiError('CONFIG', 'Cloud is not configured yet');
-  if (!sb) sb = createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } });
+// ── cloud: Neon (Data API + Neon Auth) or Supabase — same Supabase-style client either way ──
+let sb: Promise<SupabaseClient> | null = null;
+/** Loaded on demand so the demo and first paint don't download either SDK. */
+export function cloud(): Promise<SupabaseClient> {
+  if (!cloudConfigured) return Promise.reject(new ApiError('CONFIG', 'Cloud is not configured yet'));
+  if (!sb) {
+    sb = cloudProvider === 'neon'
+      ? import('@neon/neon-js/supabase').then((m) => m.createClient(NEON_URL) as unknown as SupabaseClient)
+      : import('@supabase/supabase-js').then((m) => m.createClient(SUPABASE_URL, SUPABASE_KEY, { auth: { persistSession: true, autoRefreshToken: true } }));
+  }
   return sb;
 }
 
@@ -75,7 +82,7 @@ async function rawRpc<T>(fn: string, args: Record<string, unknown>): Promise<T> 
       throw new ApiError(e.code || 'DB', e.message || 'Something went wrong');
     }
   }
-  const { data, error } = await supabase().rpc(fn, args);
+  const { data, error } = await (await cloud()).rpc(fn, args);
   if (error) {
     if (isNetworkError(error)) throw new ApiError('OFFLINE', error.message);
     throw new ApiError(error.code || 'DB', error.message);
@@ -128,16 +135,18 @@ export async function rpc<T = any>(fn: string, args: Record<string, unknown> = {
 export const uuid = () => crypto.randomUUID();
 
 // ── auth ────────────────────────────────────────────────────────────────────────
-export async function currentSession(): Promise<Session | 'demo' | null> {
+export async function currentSession(): Promise<unknown | 'demo' | null> {
   const mode = getMode();
   if (mode === 'demo') return 'demo';
   if (mode === 'cloud' && cloudConfigured) {
-    const { data } = await supabase().auth.getSession();
-    return data.session;
+    try {
+      const { data } = await (await cloud()).auth.getSession();
+      return data?.session ?? null;
+    } catch { return null; }
   }
   return null;
 }
 export async function signOut() {
-  if (getMode() === 'cloud' && cloudConfigured) await supabase().auth.signOut();
+  if (getMode() === 'cloud' && cloudConfigured) await (await cloud()).auth.signOut();
   setMode(null);
 }

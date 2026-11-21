@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useApp } from '../lib/store';
-import { cloudConfigured, rpc, setMode, supabase } from '../lib/backend';
+import { cloudConfigured, rpc, setMode, cloud } from '../lib/backend';
 import { LANGS, type Lang } from '../lib/i18n';
 import { Icon, Field, SaveButton, ErrorBox } from '../ui';
 
@@ -44,11 +44,11 @@ export function Welcome() {
       if (!/^\S+@\S+\.\S+$/.test(email)) throw new Error(t('auth.badEmail'));
       if (password.length < 8) throw new Error(t('auth.badPassword'));
       if (view === 'signup') {
-        const { data, error } = await supabase().auth.signUp({ email, password });
+        const { data, error } = await (await cloud()).auth.signUp({ email, password });
         if (error) throw error;
         if (!data.session) { setInfo(t('auth.checkEmail')); setView('login'); return; }
       } else {
-        const { error } = await supabase().auth.signInWithPassword({ email, password });
+        const { error } = await (await cloud()).auth.signInWithPassword({ email, password });
         if (error) throw error;
       }
       setMode('cloud');

@@ -108,4 +108,7 @@ do $$ begin
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute 'revoke execute on all functions in schema public from anon';
   end if;
+  if exists (select 1 from pg_roles where rolname = 'anonymous') then
+    execute 'revoke execute on all functions in schema public from anonymous';
+  end if;
 end $$;

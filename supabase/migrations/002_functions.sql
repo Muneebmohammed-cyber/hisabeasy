@@ -7,7 +7,7 @@
 -- ───────────────────────────── helpers ────────────────────────────────────────
 create or replace function public._uid() returns uuid
 language plpgsql stable as $$
-declare v uuid := auth.uid();
+declare v uuid := public.current_user_id();
 begin
   if v is null then raise exception 'Please sign in' using errcode = 'HE001'; end if;
   return v;
@@ -105,10 +105,10 @@ end $$;
 create or replace function public.my_businesses() returns jsonb
 language sql stable security definer set search_path = public, pg_temp as $$
   select coalesce(jsonb_agg(to_jsonb(b) || jsonb_build_object('role', m.role,
-           'is_active', b.id = (select active_business_id from profiles where user_id = auth.uid()))
+           'is_active', b.id = (select active_business_id from profiles where user_id = public.current_user_id()))
          order by b.created_at), '[]'::jsonb)
   from business_members m join businesses b on b.id = m.business_id
-  where m.user_id = auth.uid();
+  where m.user_id = public.current_user_id();
 $$;
 
 create or replace function public.update_business(p_business uuid, p_patch jsonb) returns jsonb
@@ -767,9 +767,15 @@ end $$;
 -- ───────────────────────────── grants ─────────────────────────────────────────
 revoke execute on all functions in schema public from public;
 do $$ begin
+  -- Supabase calls its public role "anon", Neon's Data API calls it "anonymous".
   if exists (select 1 from pg_roles where rolname = 'anon') then
     execute 'revoke execute on all functions in schema public from anon';
   end if;
+  if exists (select 1 from pg_roles where rolname = 'anonymous') then
+    execute 'revoke execute on all functions in schema public from anonymous';
+    execute 'revoke all on all tables in schema public from anonymous';
+  end if;
 end $$;
+grant usage on schema public to authenticated;
 grant execute on all functions in schema public to authenticated;
 -- internal helpers stay callable (they are needed by RLS and the functions) but expose nothing on their own.

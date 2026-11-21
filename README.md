@@ -15,7 +15,7 @@ WhatsApp reminders, stock, expenses and a five-second dashboard, in Malayalam, E
 | Khata | Customers, credit sales, manual credit, payments, due dates, overdue (oldest-first), ledger with running balance, statement share, WhatsApp reminder, credit limit, opening balance, reversals |
 | Inventory | Products with prices/units/SKU/barcode, auto deduction on sale, stock in, adjustments, damage, movement history, low/out alerts; can be switched off |
 | Expenses | 7 categories, method, date, note, cancel, monthly breakdown |
-| Platform | Supabase Postgres with RLS per business, roles, audit log, idempotent writes, offline queue, configurable plans, PWA install |
+| Platform | PostgreSQL (Neon or Supabase) with RLS per business, roles, audit log, idempotent writes, offline queue, configurable plans, PWA install |
 
 ## Run it
 
@@ -27,14 +27,19 @@ npm run build        # production build in dist/
 
 **Demo mode** runs the real database code in the browser (PGlite), so it behaves exactly like production.
 
-## Connect Supabase (cloud accounts)
+## Connect a cloud database (Neon – recommended, free)
 
-1. Create a project at supabase.com (region: Mumbai `ap-south-1` for Kerala users).
-2. SQL Editor → run, in order: `supabase/migrations/001_schema.sql`, `002_functions.sql`, `003_demo_seed.sql`.
-3. Authentication → Providers → Email: on. (Turn "Confirm email" off while testing if you like.)
-4. Project Settings → API: copy the **Project URL** and **anon public key** into `public/config.js`.
-   (The anon key is meant to be public; all data is protected by sign-in + row-level security.)
-5. Rebuild / redeploy. The welcome screen now shows *Create free account*.
+Neon's free plan allows 100 projects (Supabase allows 2), scales to zero when idle and runs the same SQL.
+
+1. Sign up at neon.com → **New project** `hisabeasy`, Postgres 17+, region nearest your users (Asia Pacific).
+2. In the project: **Auth** → enable Neon Auth (email + password).
+3. **Data API** → enable it, choose **Neon Auth** as the provider, expose schema `public`.
+   (Do this before step 4 — it creates the `authenticated` and `anonymous` roles the SQL grants to.)
+4. **SQL Editor** → run, in order: `supabase/migrations/001_schema.sql`, `002_functions.sql`, `003_demo_seed.sql`.
+5. Copy the project's base URL (Data API page, e.g. `https://ep-xxx.ap-southeast-1.aws.neon.tech/neondb`)
+   into `neonUrl` in `public/config.js`, commit, and the site redeploys. The welcome screen now shows *Create free account*.
+
+The same SQL also runs on Supabase: put `supabaseUrl` + `supabaseAnonKey` in `config.js` instead.
 
 ## Deploy on GitHub Pages
 
@@ -47,6 +52,7 @@ npm run build        # production build in dist/
 
 ```bash
 npm run test:pglite   # migrations + demo seed inside PGlite
+bash tests/neon_sim.sh # Neon-style roles + non-UUID auth ids
 npm run test:db       # 78 API checks on PostgreSQL 16 (needs a local server on port 5544, see tests/load.sh)
 python3 tests/e2e.py  # browser run at phone size against `npm run preview`
 ```

@@ -5,6 +5,27 @@
 
 -- gen_random_uuid() is built into PostgreSQL 13+.
 
+-- ───────────────────────────── Who is calling (portable) ──────────────────────
+-- Works on Supabase (request.jwt.claims / auth.uid), Neon Data API (pg_session_jwt auth.user_id())
+-- and plain PostgreSQL/PGlite (request.jwt.claim.sub). Non-UUID ids are mapped to a stable UUID.
+create or replace function public.current_user_id() returns uuid
+language plpgsql stable as $$
+declare s text;
+begin
+  s := nullif(current_setting('request.jwt.claim.sub', true), '');
+  if s is null then
+    begin s := nullif((nullif(current_setting('request.jwt.claims', true), '')::jsonb) ->> 'sub', '');
+    exception when others then s := null; end;
+  end if;
+  if s is null then
+    begin execute 'select auth.user_id()::text' into s;   -- Neon
+    exception when others then s := null; end;
+  end if;
+  if s is null then return null; end if;
+  if s ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' then return s::uuid; end if;
+  return md5(s)::uuid;
+end $$;
+
 -- ───────────────────────────── Plans (configurable, not hardcoded) ─────────────
 create table if not exists public.plans (
   code        text primary key,
@@ -245,7 +266,7 @@ create index if not exists audit_business_idx on public.audit_log(business_id, a
 create or replace function public.tg_audit() returns trigger
 language plpgsql security definer set search_path = public, pg_temp as $$
 declare
-  v_actor uuid := nullif(current_setting('request.jwt.claim.sub', true), '')::uuid;
+  v_actor uuid := public.current_user_id();
 begin
   if tg_op = 'DELETE' then
     insert into audit_log(business_id, table_name, record_id, action, old_data, actor)
@@ -307,7 +328,7 @@ end $$;
 -- ───────────────────────────── Row-level security ─────────────────────────────
 create or replace function public.is_member(p_business uuid) returns boolean
 language sql stable security definer set search_path = public, pg_temp as $$
-  select exists (select 1 from business_members m where m.business_id = p_business and m.user_id = auth.uid());
+  select exists (select 1 from business_members m where m.business_id = p_business and m.user_id = public.current_user_id());
 $$;
 
 alter table public.plans enable row level security;
@@ -333,7 +354,7 @@ create policy businesses_read on public.businesses for select to authenticated u
 drop policy if exists members_read on public.business_members;
 create policy members_read on public.business_members for select to authenticated using (is_member(business_id));
 drop policy if exists profiles_read on public.profiles;
-create policy profiles_read on public.profiles for select to authenticated using (user_id = auth.uid());
+create policy profiles_read on public.profiles for select to authenticated using (user_id = public.current_user_id());
 
 do $$
 declare t text;
